@@ -62,6 +62,7 @@
  * @param {Drawing} _drawing
  * @param {Object} _parameterJSON
  * @param {Int} _order
+ * @param {Object} linkedDoodleParameters
  */
 ED.Doodle = function(_drawing, _parameterJSON) {
 	// Function called as part of prototype assignment has no parameters passed
@@ -71,6 +72,9 @@ ED.Doodle = function(_drawing, _parameterJSON) {
 
 		// Unique ID of doodle within this drawing
 		this.id = this.drawing.nextDoodleId();
+
+		// can override with 'stroke' to support line hit testing
+		this.hitTestMethod = 'path';
 
 		// Optional array of squiggles
 		this.squiggleArray = new Array();
@@ -85,6 +89,11 @@ ED.Doodle = function(_drawing, _parameterJSON) {
 		// Set initial scale level (the scale level will be adjusted later only once
 		// params have been set)
 		this.scaleLevel = 1;
+
+		// Object indexed by linked doodle class name to define parameters that should be synced between the doodles
+		// primarily for the benefit of cross section doodles
+		// TODO: see if we can subclass to a cross section doodle and include in that instead
+		this.linkedDoodleParameters = {};
 
 		// Dragging defaults - set individual values in subclasses
 		this.isLocked = false;
@@ -606,10 +615,10 @@ ED.Doodle.prototype.hitTest = function(ctx, _point)
     if (ED.isFirefox()) {
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        result = ctx.isPointInPath(_point.x, _point.y);
+        result = this.hitTestMethod === 'stroke' ? ctx.isPointInStroke(_point.x, _point.y) : ctx.isPointInPath(_point.x, _point.y);
         ctx.restore();
     } else {
-        result = ctx.isPointInPath(_point.x, _point.y);
+        result = this.hitTestMethod === 'stroke' ? ctx.isPointInStroke(_point.x, _point.y) : ctx.isPointInPath(_point.x, _point.y);
     }
     return result;
 };
@@ -2150,7 +2159,7 @@ ED.Doodle.prototype.json = function() {
 				} else if (typeof(o) == 'object') {
 					o = JSON.stringify(o);
 				} else {
-					ED.errorHandler('ED.Doodle', 'json', 'Attempt to create json for an unhandled parameter type: ' + typeof(o));
+					ED.errorHandler('ED.Doodle', 'json', 'Attempt to create json for parameter ' + p + ' with an unhandled parameter type: ' + typeof(o));
 					o = "ERROR";
 				}
 
@@ -2342,6 +2351,12 @@ ED.Doodle.prototype.adjustScaleAndPosition = function(amount){
 	if (this.lastOriginX) this.lastOriginX *= amount;
 	if (this.lastOriginY) this.lastOriginY *= amount;
 };
+
+ED.Doodle.prototype.getLinkedParameters = function(linkedDoodleClass) {
+	if (typeof(this.linkedDoodleParameters[linkedDoodleClass]) != "undefined") {
+		return this.linkedDoodleParameters[linkedDoodleClass];
+	}
+}
 
 /**
  * Outputs doodle information to the console

@@ -39,6 +39,14 @@ ED.LensCrossSection = function(_drawing, _parameterJSON) {
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+  this.linkedDoodleParameters = {
+    'Lens': {
+      source: ['originY', 'nuclearGrade', 'corticalGrade', 'posteriorSubcapsularGrade', 'phakodonesis', 'anteriorPolar', 'posteriorPolar'],
+      store: [['originX', 'csOriginX']]
+    }
+  };
+
 }
 
 /**

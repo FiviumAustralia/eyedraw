@@ -192,7 +192,7 @@ ED.positiveAngle = function(_angle) {
  * @param {String} _message Error message
  */
 ED.errorHandler = function(_class, _method, _message) {
-	console.log('EYEDRAW ERROR! class: [' + _class + '] method: [' + _method + '] message: [' + _message + ']');
+	console.trace('EYEDRAW ERROR! class: [' + _class + '] method: [' + _method + '] message: [' + _message + ']');
 };
 
 /**
@@ -1788,7 +1788,6 @@ ED.Drawing.prototype.deleteDoodle = function(_doodle, really) {
 	var deletedClassName = false;
 
 	var errorMessage = 'Attempt to delete a doodle that does not exist';
-
 	// Check that doodle will delete
 	if (really || _doodle.willDelete()) {
 		// Iterate through doodle array looking for doodle
@@ -2847,89 +2846,64 @@ ED.Drawing.prototype.suppressReports = function() {
 };
 
 /**
+ * Returns a list of report strings to allow more fine grained manipulation of results.
+ *
+ * @returns {Array} list of report strings from doodle(s) on drawing
+ */
+ED.Drawing.prototype.reportData = function() {
+	var reports = [];
+	var grouped = {};
+	for (var i = 0; i < this.doodleArray.length; i++) {
+		var doodle = this.doodleArray[i];
+		var description = doodle.description();
+
+		if (doodle.willReport) {
+			var groupDescription = doodle.groupDescription();
+			if (groupDescription.length > 0) {
+				if (typeof(grouped[doodle.className]) === 'undefined') {
+					grouped[doodle.className] = {
+						'start': groupDescription,
+						'descriptions': [],
+						'end': doodle.groupDescriptionEnd()
+					}
+				}
+				grouped[doodle.className]['descriptions'].push(description)
+			} else {
+				if (description.length) {
+					reports.push(description);
+				}
+			}
+		}
+	}
+
+	// consolidate group reports
+  for (var cls in grouped) {
+		var groupStr = '';
+    if (grouped.hasOwnProperty(cls)) {
+      groupStr = grouped[cls]['start'];
+      groupStr += ED.addAndAfterLastComma(grouped[cls]['descriptions'].join(", "));
+      groupStr += grouped[cls]['end'];
+      reports.push(groupStr);
+    }
+  }
+
+	return reports;
+}
+
+/**
  * Returns a string containing a description of the drawing
  *
  * @returns {String} Description of the drawing
  */
 ED.Drawing.prototype.report = function() {
 	var returnString = "";
-	var groupArray = [];
-	var groupEndArray = [];
 
-	// Go through every doodle
-	for (var i = 0; i < this.doodleArray.length; i++) {
-		var doodle = this.doodleArray[i];
-
-		// Reporting can be switched off with willReport flag
-		if (doodle.willReport) {
-			// Check for a group description
-			if (doodle.groupDescription().length > 0) {
-				// Create an array entry for it or add to existing
-				if (typeof(groupArray[doodle.className]) == 'undefined') {
-					groupArray[doodle.className] = doodle.groupDescription();
-					groupArray[doodle.className] += doodle.description();
-				} else {
-					// Only add additional detail if supplied by description method
-					if (doodle.description().length > 0) {
-						groupArray[doodle.className] += ", ";
-						groupArray[doodle.className] += doodle.description();
-					}
-				}
-
-				// Check if there is a corresponding end description
-				if (doodle.groupDescriptionEnd().length > 0) {
-					if (typeof(groupEndArray[doodle.className]) == 'undefined') {
-						groupEndArray[doodle.className] = doodle.groupDescriptionEnd();
-					}
-				}
-			} else {
-				// Get description
-				var description = doodle.description();
-
-				// If its not an empty string, add to the return
-				if (description.length > 0) {
-					// If text there already, make it lower case and add a comma before
-					if (returnString.length == 0) {
-						returnString += description;
-					} else {
-						returnString = returnString + ", " + ED.firstLetterToLowerCase(description);
-					}
-				}
-			}
-		}
+	var data = this.reportData();
+	for (var i = 0; i < data.length; i++) {
+		returnString += (i === 0) ? data[i] : ", " + ED.firstLetterToLowerCase(data[i]);
 	}
 
-	// Go through group array adding descriptions
-	for (className in groupArray) {
-		// Get description
-		var description = groupArray[className];
-
-		// Get end description
-		var endDescription = "";
-		if (typeof(groupEndArray[className]) != 'undefined') {
-			endDescription = groupEndArray[className];
-		}
-
-		// Replace last comma with a comma and 'and'
-		description = ED.addAndAfterLastComma(description) + endDescription;
-
-		// If its not an empty string, add to the return
-		if (description.length > 0) {
-			// If text there already, make it lower case and add a comma before
-			if (returnString.length == 0) {
-				returnString += description;
-			} else {
-				returnString = returnString + ", " + ED.firstLetterToLowerCase(description);
-			}
-		}
-	}
-
-	if (!returnString.length) {
-		returnString = 'No abnormality';
-	}
-
-	// Return result
-	return returnString;
+	return (returnString.length > 0) ? returnString : "No abnormality";
 };
 
 
@@ -3256,6 +3230,7 @@ ED.Drawing.prototype.getScaleLevel = function() {
  * @param {Drawing} _drawing
  * @param {Object} _parameterJSON
  * @param {Int} _order
+ * @param {Object} linkedDoodleParameters
  */
 ED.Doodle = function(_drawing, _parameterJSON) {
 	// Function called as part of prototype assignment has no parameters passed
@@ -3265,6 +3240,9 @@ ED.Doodle = function(_drawing, _parameterJSON) {
 
 		// Unique ID of doodle within this drawing
 		this.id = this.drawing.nextDoodleId();
+
+		// can override with 'stroke' to support line hit testing
+		this.hitTestMethod = 'path';
 
 		// Optional array of squiggles
 		this.squiggleArray = new Array();
@@ -3279,6 +3257,11 @@ ED.Doodle = function(_drawing, _parameterJSON) {
 		// Set initial scale level (the scale level will be adjusted later only once
 		// params have been set)
 		this.scaleLevel = 1;
+
+		// Object indexed by linked doodle class name to define parameters that should be synced between the doodles
+		// primarily for the benefit of cross section doodles
+		// TODO: see if we can subclass to a cross section doodle and include in that instead
+		this.linkedDoodleParameters = {};
 
 		// Dragging defaults - set individual values in subclasses
 		this.isLocked = false;
@@ -3800,10 +3783,10 @@ ED.Doodle.prototype.hitTest = function(ctx, _point)
     if (ED.isFirefox()) {
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        result = ctx.isPointInPath(_point.x, _point.y);
+        result = this.hitTestMethod === 'stroke' ? ctx.isPointInStroke(_point.x, _point.y) : ctx.isPointInPath(_point.x, _point.y);
         ctx.restore();
     } else {
-        result = ctx.isPointInPath(_point.x, _point.y);
+        result = this.hitTestMethod === 'stroke' ? ctx.isPointInStroke(_point.x, _point.y) : ctx.isPointInPath(_point.x, _point.y);
     }
     return result;
 };
@@ -5344,7 +5327,7 @@ ED.Doodle.prototype.json = function() {
 				} else if (typeof(o) == 'object') {
 					o = JSON.stringify(o);
 				} else {
-					ED.errorHandler('ED.Doodle', 'json', 'Attempt to create json for an unhandled parameter type: ' + typeof(o));
+					ED.errorHandler('ED.Doodle', 'json', 'Attempt to create json for parameter ' + p + ' with an unhandled parameter type: ' + typeof(o));
 					o = "ERROR";
 				}
 
@@ -5536,6 +5519,12 @@ ED.Doodle.prototype.adjustScaleAndPosition = function(amount){
 	if (this.lastOriginX) this.lastOriginX *= amount;
 	if (this.lastOriginY) this.lastOriginY *= amount;
 };
+
+ED.Doodle.prototype.getLinkedParameters = function(linkedDoodleClass) {
+	if (typeof(this.linkedDoodleParameters[linkedDoodleClass]) != "undefined") {
+		return this.linkedDoodleParameters[linkedDoodleClass];
+	}
+}
 
 /**
  * Outputs doodle information to the console
@@ -13040,9 +13029,10 @@ ED.Perforation.prototype.diagnosticHierarchy = function() {
 ED.ACIOL = function(_drawing, _parameterJSON) {
 	// Set classname
 	this.className = "ACIOL";
+    this.csOriginX = -140;
 
 	// Saved parameters
-	this.savedParameterArray = ['originX', 'originY', 'rotation'];
+	this.savedParameterArray = ['originX', 'originY', 'rotation', 'csOriginX'];
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
@@ -13226,10 +13216,17 @@ ED.ACIOLCrossSection = function(_drawing, _parameterJSON) {
 	this.className = "ACIOLCrossSection";
 	
 	// Saved parameters
-	this.savedParameterArray = [];
+	this.savedParameterArray = ['originX', 'originY'];
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+    this.linkedDoodleParameters = {
+        'ACIOL': {
+            source: ['originY'],
+            store: [['originX', 'csOriginX']]
+        }
+    };
 }
 
 /**
@@ -15456,8 +15453,9 @@ ED.AntSeg = function(_drawing, _parameterJSON) {
 	this.colour = 'Blue';
 	this.ectropion = false;
 	this.cornealSize = 'Normal';
-  this.cells = 'Not Checked';
-  this.flare = 'Not Checked';
+	this.cells = 'Not Checked';
+	this.flare = 'Not Checked';
+	this.csApexX = 0;
 
 	// Saved parameters
 	this.savedParameterArray = [
@@ -15470,7 +15468,8 @@ ED.AntSeg = function(_drawing, _parameterJSON) {
 		'ectropion',
 		'cornealSize',
 		'cells',
-		'flare'
+		'flare',
+		'csApexX' // store of cross section apex x value
 	];
 
 	// Parameters in doodle control bar (parameter name: parameter label)
@@ -16058,14 +16057,21 @@ ED.AntSegCrossSection = function(_drawing, _parameterJSON) {
 
 	// Derived parameters
 	this.pupilSize = 'Large';
-    this.c = 1;
-  this.colour = 'Blue';
+
+	this.colour = 'Blue';
     
 	// Saved parameters
 	this.savedParameterArray = ['apexY', 'apexX','colour','c'];
 
-	// Call superclass constructor
+    // Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+  	this.linkedDoodleParameters = {
+    	'AntSeg': {
+      		source: ['apexY', 'colour'],
+      		store: [['apexX', 'csApexX']]
+    	}
+  	};
 
 	// Invariant simple parameters
 	this.originX = 44;
@@ -16153,12 +16159,13 @@ ED.AntSegCrossSection.prototype.dependentParameterValues = function(_parameter, 
 			this.parameterValidationArray['apexX']['range'].setMinAndMax(-40 - (140 / 220) * (this.apexY + 280), maxApexX);
 
 			// If being synced, make sensible decision about x
-			if (!this.drawing.isActive) {
-				var newOriginX = this.parameterValidationArray['apexX']['range'].max;
-			} else {
-				var newOriginX = this.parameterValidationArray['apexX']['range'].constrain(this.apexX);
-			}
-			this.setSimpleParameter('apexX', newOriginX);
+			// Commented out by MCS as was preventing display of saved values ... the above prevents overlap with the PCIOL though
+			// if (!this.drawing.isActive) {
+			// 	var newOriginX = this.parameterValidationArray['apexX']['range'].max;
+			// } else {
+			// 	var newOriginX = this.parameterValidationArray['apexX']['range'].constrain(this.apexX);
+			// }
+			// this.setSimpleParameter('apexX', newOriginX);
 
 			// Set pupil size value
 			if (_value < -200) returnArray['pupilSize'] = 'Large';
@@ -20287,6 +20294,89 @@ ED.ConjunctivalSuture.prototype.description = function() {
 }
 
 /**
+ * Cornea
+ *
+ * @class Cornea
+ * @property {String} className Name of doodle subclass
+ * @param {Drawing} _drawing
+ * @param {Object} _parameterJSON
+ */
+ED.Cornea = function(_drawing, _parameterJSON) {
+    // Set classname
+    this.className = "Cornea";
+
+    // Other parameters
+    this.shape = "";
+    this.pachymetry = 540;
+
+    // Saved parameters
+    this.savedParameterArray = ['shape', 'pachymetry', 'csOriginX', 'csApexX', 'csApexY'];
+
+    // Call superclass constructor
+    ED.Doodle.call(this, _drawing, _parameterJSON);
+}
+
+/**
+ * Sets superclass and constructor
+ */
+ED.Cornea.prototype = new ED.Doodle;
+ED.Cornea.prototype.constructor = ED.Cornea;
+ED.Cornea.superclass = ED.Doodle.prototype;
+
+
+/**
+ * Sets default parameters (Only called for new doodles)
+ * Use the setParameter function for derived parameters, as this will also update dependent variables
+ */
+ED.Cornea.prototype.setParameterDefaults = function() {
+    this.csOriginX = 50;
+    this.csApexX = -363;
+    this.csApexY = 0;
+    this.setParameterFromString('shape', 'Normal');
+    this.setParameterFromString('pachymetry', '540');
+}
+
+/**
+ * This is basically duplicated from CorneaCrossSection, which could certainly benefit from some refactoring
+ * further down the track
+ */
+ED.Cornea.prototype.setPropertyDefaults = function() {
+    this.isSelectable = false;
+    this.isDeletable = false;
+    this.isMoveable = false;
+    this.isRotatable = false;
+    this.isUnique = true;
+    this.willReport = false;
+
+    // Update validation array for simple parameters
+    this.parameterValidationArray['apexX']['range'].setMinAndMax(-365, -300);
+    this.parameterValidationArray['apexY']['range'].setMinAndMax(-100, +100);
+
+    // Other parameters
+    this.parameterValidationArray['shape'] = {
+        kind: 'other',
+        type: 'string',
+        list: ['Normal', 'Keratoconus', 'Keratoglobus'],
+        animate: false
+    };
+    this.parameterValidationArray['pachymetry'] = {
+        kind: 'other',
+        type: 'int',
+        range: new ED.Range(400, 700),
+        precision: 1,
+        animate: false
+    };
+}
+
+/**
+ * Transparent doodle can not be clicked
+ *
+ * @param {Point} _point Optional point in canvas plane, passed if performing hit test
+ */
+ED.Cornea.prototype.draw = function(_point) {
+    return false;
+}
+/**
  * OpenEyes
  *
  * (C) Moorfields Eye Hospital NHS Foundation Trust, 2008-2011
@@ -20331,6 +20421,13 @@ ED.CorneaCrossSection = function(_drawing, _parameterJSON) {
 	
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+    this.linkedDoodleParameters = {
+        'Cornea': {
+            source: ['shape', 'pachymetry'],
+            store: [['apexX', 'csApexX'], ['apexY', 'csApexY'], ['originX', 'csOriginX']]
+        }
+    };
 }
 
 /**
@@ -21712,7 +21809,7 @@ ED.CornealLaceration = function(_drawing, _parameterJSON) {
 	this.mousePoint = new ED.Point(-550,-550); //default off canvas so not visible
 
 	// Saved parameters
-	this.savedParameterArray = ['lacerationDepth','numberOfHandles','irisProlapse'];
+	this.savedParameterArray = ['complete','lacerationDepth','numberOfHandles','irisProlapse'];
 
 	// Parameters in doodle control bar (parameter name: parameter label)
 	this.controlParameterArray = {
@@ -21722,6 +21819,7 @@ ED.CornealLaceration = function(_drawing, _parameterJSON) {
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
 }
 
 /**
@@ -21768,15 +21866,6 @@ ED.CornealLaceration.prototype.setPropertyDefaults = function() {
 		display: false
 	};
 
-
-	// default handle positions
-	var squiggle = new ED.Squiggle(this, new ED.Colour(100, 100, 100, 1), 4, true);
-
-	this.squiggleArray.push(squiggle);
-
-	var point = new ED.Point(0, 0);
-	this.addPointToSquiggle(point);
-
 	var d = this;
 
 	//Complete doodle on double click
@@ -21819,6 +21908,9 @@ ED.CornealLaceration.prototype.setPropertyDefaults = function() {
  * Use the setParameter function for derived parameters, as this will also update dependent variables
  */
 ED.CornealLaceration.prototype.setParameterDefaults = function() {
+	// create the base squiggle
+	var squiggle = new ED.Squiggle(this, new ED.Colour(100, 100, 100, 1), 4, true);
+	this.squiggleArray.push(squiggle);
 }
 
 /**
@@ -21836,6 +21928,11 @@ ED.CornealLaceration.prototype.dependentParameterValues = function(_parameter, _
 		case 'handles':
 		returnArray['lacType'] = this.calculateLacerationType();
 		break;
+		case 'complete':
+			if (this.complete) {
+				this.numberOfHandles = this.squiggleArray[0].pointsArray.length - 1;
+				this.setHandles();
+			}
 	}
 	return returnArray;
 }
@@ -21849,8 +21946,6 @@ ED.CornealLaceration.prototype.dependentParameterValues = function(_parameter, _
 ED.CornealLaceration.prototype.draw = function(_point) {
 	// Get context
 	var ctx = this.drawing.context;
-	// firefox not calling description
-	this.description();
 
 	// Call draw method in superclass
 	ED.CornealLaceration.superclass.draw.call(this, _point);
@@ -21861,36 +21956,27 @@ ED.CornealLaceration.prototype.draw = function(_point) {
 	// Draw rectangle for boundary drawing area over entire canvas if doodle incomplete
 	if (!this.complete) {
 		ctx.rect(this.boundaryMin, this.boundaryMin, this.boundaryWidth, this.boundaryWidth);
+		this.hitTestMethod = 'path';
+		ctx.lineWidth = 2;
 	}
 	// Otherwise draw boundary rectangle around the doodle
 	else {
-		var minX = this.squiggleArray[0].pointsArray[0].x;
-		var minY = this.squiggleArray[0].pointsArray[0].y;
-		var maxX = this.squiggleArray[0].pointsArray[0].x;
-		var maxY = this.squiggleArray[0].pointsArray[0].y;
-
-		// Find the smallest x and y handle coordinates
-		for (var j=1; j<this.squiggleArray[0].pointsArray.length; j++) {
-			var p = this.squiggleArray[0].pointsArray[j];
-			if (p.x<minX) minX=p.x;
-			if (p.y<minY) minY=p.y;
-			if (p.x>maxX) maxX=p.x;
-			if (p.y>maxY) maxY=p.y;
-		}
-
-		//Find height and width of the doodle
-		var width = maxX-minX;
-		var height = maxY-minY;
-
-		// Draw boundary rectangle around handles
-		ctx.rect(minX-50, minY-50, width+100, height+100);
+		this.hitTestMethod = 'stroke';
+        var squiggle = this.squiggleArray[0];
+		// drawing lines for hit test
+		ctx.strokeStyle = "rgba(0, 0, 0, 0)";
+        ctx.lineWidth = 10; // set wider for hit testing
+        for (var i = this.numberOfHandles-1; i >= 0; i--) {
+            ctx.lineTo(squiggle.pointsArray[i].x, squiggle.pointsArray[i].y);
+        }
+        ctx.stroke();
 	}
 
 	// Close path
 	ctx.closePath();
 
 	// Set attributes for border (colour changes to indicate drawing mode)
-	ctx.lineWidth = 2;
+
 	this.isFilled = false;
 	ctx.strokeStyle = "rgba(255, 255, 255, 0)";
 	if (this.isSelected && !this.complete) ctx.strokeStyle = "gray";
@@ -21908,7 +21994,7 @@ ED.CornealLaceration.prototype.draw = function(_point) {
 			// Squiggle attributes
 			ctx.lineWidth = 5;
 			ctx.strokeStyle = "blue";
-			
+
 
 			// Iterate through squiggle points
 			for (var i = this.numberOfHandles-1; i >= 0; i--) {
@@ -21962,6 +22048,10 @@ ED.CornealLaceration.prototype.description = function() {
 	else  if (this.lacerationDepth > 0) text += 'Partial thickness ' +  this.lacType + ' ' + linearDistanceShort +'mm, '+ this.lacerationDepth + '%';
 	else text += this.lacType + ' ' + linearDistanceShort + 'mm';
 
+    if (this.irisProlapse) {
+    	text += ' with iris prolapse';
+    }
+    
 	return text;
 }
  	
@@ -21994,7 +22084,19 @@ ED.CornealLaceration.prototype.addHandle = function(_position) {
 	this.updateDependentParameters('handles');
 }
 
+/**
+ * Returns the SnoMed code of the doodle
+ *
+ * @returns {Int} SnoMed code of entity representated by doodle
+ */
+ED.CornealLaceration.prototype.snomedCodes = function() {
+	var result = [[95725002, 3]];
+	if (this.irisProlapse) {
+		result.push([77676001, 3]);
+	}
 
+    return result;
+}
 
 
 /**
@@ -23524,6 +23626,12 @@ ED.CornealOpacityCrossSection = function(_drawing, _parameterJSON) {
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+  this.linkedDoodleParameters = {
+    'CornealOpacity': {
+      source: ['yMidPoint','d','h','w','iW','originY','minY','maxY']
+    }
+  };
 }
 
 /**
@@ -24396,10 +24504,6 @@ ED.CornealPigmentation = function(_drawing, _parameterJSON) {
 	// Set classname
 	this.className = "CornealPigmentation";
 	
-	// Other parameters
-	this.level = 'Epithelial';
-	this.type = 'Iron';
-
 	// Saved parameters
 	this.savedParameterArray = ['originX', 'originY', 'apexY', 'apexX', 'scaleX','scaleY', 'rotation', 'level', 'type'];
 
@@ -24449,7 +24553,7 @@ ED.CornealPigmentation.prototype.setPropertyDefaults = function() {
 	this.parameterValidationArray['level'] = {
 		kind: 'derived',
 		type: 'string',
-		list: ['Epithelial', 'Subepithelial', 'Anterior stromal', 'Mid stromal', 'Posterior stromal', 'Descemet\'s'],
+		list: ['Endothelium', 'Epithelial', 'Subepithelial', 'Anterior stromal', 'Mid stromal', 'Posterior stromal', 'Descemet\'s'],
 		animate: true
 	};
 	this.parameterValidationArray['type'] = {
@@ -24470,7 +24574,8 @@ ED.CornealPigmentation.prototype.setPropertyDefaults = function() {
  * Sets default parameters
  */
 ED.CornealPigmentation.prototype.setParameterDefaults = function() {
-	this.setParameterFromString('level', 'Epithelial');
+	this.setParameterFromString('level', 'Endothelium');
+  this.setParameterFromString('type', 'Melanin');
 	this.apexY = -150;
 	this.apexX = 30;
 	
@@ -24589,13 +24694,16 @@ ED.CornealPigmentation.prototype.draw = function(_point) {
  *
  * @returns {String} Description of doodle
  */
-ED.CornealPigmentation.prototype.groupDescription = function() {
+ED.CornealPigmentation.prototype.description = function() {
 	
-	var ratio = Math.abs(this.apexX / this.apexY);
-	
-	var str = (ratio<2.5 && ratio>0.3) ? "Corneal pigmentation" : "Krukenberg spindle";
-	
-	return str;
+	// old ratio check method
+	// var ratio = Math.abs(this.apexX / this.apexY);
+	// var str = (ratio<2.5 && ratio>0.3) ? "Corneal pigmentation" : "Krukenberg spindle";
+	if (this.type === 'Melanin' && this.level === 'Endothelium') {
+		return 'Krukenberg spindle';
+	}
+
+	return 'Corneal pigmentation: ' + this.type + ', ' + this.level;
 }
 
 /**
@@ -30314,9 +30422,12 @@ ED.Hyphaema = function(_drawing, _parameterJSON) {
 	// Private parameters
 	this.ro = 380;
 	this.minimum = 304;
+	this.csOriginY = 0;
+    this.csOriginX = 50;
+	this.csApexX = 0;
 
-	// Saved parameters
-	this.savedParameterArray = ['apexX', 'apexY'];
+    // Saved parameters
+	this.savedParameterArray = ['apexX', 'apexY', 'csOriginY', 'csApexX', 'csOriginX'];
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
@@ -30450,16 +30561,22 @@ ED.HyphaemaCrossSection = function(_drawing, _parameterJSON) {
 	
 	// Derived parameters
 	this.ro = 380;
-	this.minimum = 304;
-	
+
 	// Saved parameters
-	this.savedParameterArray = ['originY', 'apexX', 'apexY', 'minimum', 'originX'];
+	this.savedParameterArray = ['originY', 'apexX', 'apexY', 'originX'];
 	
 	// Parameters in doodle control bar
 	this.controlParameterArray = {};
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+    this.linkedDoodleParameters = {
+        'Hyphaema': {
+            source: ['apexY'],
+            store: [['originY', 'csOriginY'], ['apexX', 'csApexX'], ['originX', 'csOriginX']]
+        }
+    };
 }
 
 /**
@@ -30484,7 +30601,7 @@ ED.HyphaemaCrossSection.prototype.setPropertyDefaults = function() {
 		
 	// Update component of validation array for simple parameters
 	this.parameterValidationArray['apexX']['range'].setMinAndMax(-50, +50);
-	this.parameterValidationArray['apexY']['range'].setMinAndMax(-380, this.minimum);
+	this.parameterValidationArray['apexY']['range'].setMinAndMax(-380, 304);
 	
 	
 }
@@ -30809,12 +30926,19 @@ ED.Hypopyon = function(_drawing, _parameterJSON) {
 	// Private parameters
 	this.ro = 380;
 	this.minimum = 304;
-
+	this.csOriginX = 50;
 	// Saved parameters
-	this.savedParameterArray = ['apexY'];
+	this.savedParameterArray = ['apexY', 'csOriginX'];
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+    this.linkedDoodleParameters = {
+        'Hyphaema': {
+            source: ['apexY'],
+            store: [['originY', 'csOriginY'], ['apexX', 'csApexX'], ['originX', 'csOriginX']]
+        }
+    };
 }
 
 /**
@@ -30954,6 +31078,13 @@ ED.HypopyonCrossSection = function(_drawing, _parameterJSON) {
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+    this.linkedDoodleParameters = {
+        'Hypopyon': {
+            source: ['apexY'],
+            store: [['originX', 'csOriginX']]
+        }
+    };
 }
 
 /**
@@ -31189,9 +31320,7 @@ ED.HypopyonCrossSection.prototype.draw = function(_point) {
 	var marginX = (iris) ? iris.apexX: -20;
 
   if (cornea) {
-  	console.log('here!');
-  	console.log(cornea);
-    this.setSimpleParameter('originX', cornea.originX);
+  	this.setSimpleParameter('originX', cornea.originX);
   }
 
 	if (lens) {
@@ -34659,9 +34788,10 @@ ED.Lens = function(_drawing, _parameterJSON) {
 	this.posteriorPolar = false;
 	this.coronary = false;
 	this.phakodonesis = false;
+	this.csOriginX = 0;
 
 	// Saved parameters
-	this.savedParameterArray = ['rotation', 'originY', 'nuclearGrade', 'corticalGrade', 'posteriorSubcapsularGrade', 'anteriorPolar', 'posteriorPolar', 'coronary', 'phakodonesis'];
+	this.savedParameterArray = ['rotation', 'originX', 'originY', 'nuclearGrade', 'corticalGrade', 'posteriorSubcapsularGrade', 'anteriorPolar', 'posteriorPolar', 'coronary', 'phakodonesis', 'csOriginX'];
 
 	// Parameters in doodle control bar (parameter name: parameter label)
 	this.controlParameterArray = {
@@ -35084,6 +35214,14 @@ ED.LensCrossSection = function(_drawing, _parameterJSON) {
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+  this.linkedDoodleParameters = {
+    'Lens': {
+      source: ['originY', 'nuclearGrade', 'corticalGrade', 'posteriorSubcapsularGrade', 'phakodonesis', 'anteriorPolar', 'posteriorPolar'],
+      store: [['originX', 'csOriginX']]
+    }
+  };
+
 }
 
 /**
@@ -40057,9 +40195,10 @@ ED.PCIOL = function(_drawing, _parameterJSON) {
 	// Other parameters
 	this.fixation = 'In-the-bag';
 	this.fx = 1;
-	
+    this.csOriginX = 0;
+
 	// Saved parameters
-	this.savedParameterArray = ['fixation', 'fx', 'originX', 'originY', 'rotation'];
+	this.savedParameterArray = ['fixation', 'fx', 'originX', 'originY', 'rotation', 'csOriginX'];
 
 	// Parameters in doodle control bar
 	this.controlParameterArray = {'fixation':'Fixation'};
@@ -40287,6 +40426,13 @@ ED.PCIOLCrossSection = function(_drawing, _parameterJSON) {
 
 	// Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+    this.linkedDoodleParameters = {
+        'PCIOL': {
+            source: ['fixation', 'fx', 'originY'],
+            store: [['originX', 'csOriginX']]
+        }
+    };
 }
 
 /**
@@ -43861,9 +44007,6 @@ ED.Pterygium.prototype.description = function() {
 	n = (n / 380 * 6).toFixed(2);
 	
 	var returnString = "";
-
-	// Chronic if stockers line is checked
-	if (this.stockersLine) returnString += "chonic ";
 	
 	// If injection+++, then injected
 	if (this.injection == "+++") returnString += "injected ";

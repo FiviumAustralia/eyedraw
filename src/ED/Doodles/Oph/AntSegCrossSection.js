@@ -31,14 +31,21 @@ ED.AntSegCrossSection = function(_drawing, _parameterJSON) {
 
 	// Derived parameters
 	this.pupilSize = 'Large';
-    this.c = 1;
-  this.colour = 'Blue';
+
+	this.colour = 'Blue';
     
 	// Saved parameters
 	this.savedParameterArray = ['apexY', 'apexX','colour','c'];
 
-	// Call superclass constructor
+    // Call superclass constructor
 	ED.Doodle.call(this, _drawing, _parameterJSON);
+
+  	this.linkedDoodleParameters = {
+    	'AntSeg': {
+      		source: ['apexY', 'colour'],
+      		store: [['apexX', 'csApexX']]
+    	}
+  	};
 
 	// Invariant simple parameters
 	this.originX = 44;
@@ -126,12 +133,13 @@ ED.AntSegCrossSection.prototype.dependentParameterValues = function(_parameter, 
 			this.parameterValidationArray['apexX']['range'].setMinAndMax(-40 - (140 / 220) * (this.apexY + 280), maxApexX);
 
 			// If being synced, make sensible decision about x
-			if (!this.drawing.isActive) {
-				var newOriginX = this.parameterValidationArray['apexX']['range'].max;
-			} else {
-				var newOriginX = this.parameterValidationArray['apexX']['range'].constrain(this.apexX);
-			}
-			this.setSimpleParameter('apexX', newOriginX);
+			// Commented out by MCS as was preventing display of saved values ... the above prevents overlap with the PCIOL though
+			// if (!this.drawing.isActive) {
+			// 	var newOriginX = this.parameterValidationArray['apexX']['range'].max;
+			// } else {
+			// 	var newOriginX = this.parameterValidationArray['apexX']['range'].constrain(this.apexX);
+			// }
+			// this.setSimpleParameter('apexX', newOriginX);
 
 			// Set pupil size value
 			if (_value < -200) returnArray['pupilSize'] = 'Large';
