@@ -112,6 +112,10 @@ ED.Point.prototype.direction = function() {
  */
 ED.Point.prototype.clockwiseAngleTo = function(_point) { //console.log("cat: ",(this.length() * _point.length()));
 	// Floating point errors occasionally produce a number for the acos function greater than 1, causing a NaN error
+	var len = this.length() * _point.length();
+	if (len == 0.0) {
+		return 0.0;
+	}
 	var num = this.dotProduct(_point) / (this.length() * _point.length());
 	if (num > 1) num = 1;
 	var angle = Math.acos(num);
